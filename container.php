@@ -11,6 +11,7 @@ use Bernard\QueueFactory;
 use Bernard\QueueFactory\PersistentFactory;
 use Building\Domain\Aggregate\Building;
 use Building\Domain\Command;
+use Building\Domain\DomainEvent\CheckInAnomalyDetected;
 use Building\Domain\Repository\BuildingRepositoryInterface;
 use Building\Infrastructure\Repository\BuildingRepository;
 use Doctrine\DBAL\Connection;
@@ -40,6 +41,7 @@ use Prooph\ServiceBus\Message\Bernard\BernardMessageProducer;
 use Prooph\ServiceBus\Message\Bernard\BernardSerializer;
 use Prooph\ServiceBus\MessageBus;
 use Prooph\ServiceBus\Plugin\ServiceLocatorPlugin;
+use Rhumsaa\Uuid\Uuid;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use Zend\ServiceManager\ServiceManager;
 
@@ -216,6 +218,29 @@ return new ServiceManager([
                     ->get($command->buildingId())
                     ->checkOutUser($command->username());
             };
+        },
+        Command\NotifySecurityOfBreach::class => function (ContainerInterface $container) : callable {
+            $buildings = $container->get(BuildingRepositoryInterface::class);
+
+            return function (Command\NotifySecurityOfBreach $command) use ($buildings) {
+                error_log(sprintf(
+                    'Security breach in "%s" by "%s"',
+                    $command->buildingId()->toString(),
+                    $command->username()
+                ));
+            };
+        },
+        CheckInAnomalyDetected::class . '-listeners' => function (ContainerInterface $container) : array {
+            $commandBus = $container->get(CommandBus::class);
+
+            return [
+                function (CheckInAnomalyDetected $anomalyDetected) use ($commandBus) {
+                    $commandBus->dispatch(Command\NotifySecurityOfBreach::fromBuildingAndUsername(
+                        Uuid::fromString($anomalyDetected->aggregateId()),
+                        $anomalyDetected->username()
+                    ));
+                },
+            ];
         },
         BuildingRepositoryInterface::class => function (ContainerInterface $container) : BuildingRepositoryInterface {
             return new BuildingRepository(
